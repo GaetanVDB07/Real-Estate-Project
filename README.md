@@ -39,3 +39,4 @@ See [LICENSE](LICENSE) for full terms.
 
 <!-- test: feature version bump -->
 <!-- test: fix version bump -->
+<!-- test: hotfix version bump -->
