@@ -38,3 +38,4 @@ from the copyright holder.
 See [LICENSE](LICENSE) for full terms.
 
 <!-- test: feature version bump -->
+<!-- test: fix version bump -->
