@@ -162,3 +162,61 @@ dev   ────────────────────────�
 ## Fork policy
 
 Forking is **disabled where GitHub allows it** (organization-owned private repositories). This is a **public personal repository**, so GitHub does not offer a fork ban setting for this repo type. Use is further restricted by the [LICENSE](../LICENSE) (all rights reserved, no commercial use).
+
+## Versioning
+
+This project uses **Semantic Versioning (SemVer)** with a single shared version counter in [`VERSION`](../VERSION). Bumps are automated by [`.github/workflows/version-bump.yml`](../.github/workflows/version-bump.yml) when pull requests merge.
+
+### Version rules
+
+| Event | Version bump? | Git tag? | Notes |
+|-------|---------------|----------|-------|
+| `feature/*` → `dev` | Yes — patch | No | Dev moves ahead; prod unchanged |
+| `fix/*` → `dev` | Yes — patch | No | Same as features during `0.0.x` |
+| `dev` → `prod` (release) | No | Yes — `vX.Y.Z` | Prod catches up to dev's version |
+| `hotfix/*` → `prod` | Yes — patch | Yes — `vX.Y.Z` | Urgent production fix |
+| `hotfix/*` → `dev` (back-merge) | No — sync from prod | No | Avoids double-bump |
+
+While the project is at `0.0.x`, every bump is a **patch** increment (`0.0.1` → `0.0.2`). After `1.0.0`, teams typically use minor bumps for features and patch bumps for fixes/hotfixes.
+
+### Version flow
+
+```mermaid
+flowchart LR
+    subgraph devTrack [dev branch]
+        FEAT["feature/* merge"] -->|"bump patch"| DEV["dev @ 0.0.8"]
+        FIX["fix/* merge"] -->|"bump patch"| DEV
+    end
+
+    subgraph prodTrack [prod branch]
+        RELEASE["release: dev to prod"] -->|"tag v0.0.8"| PROD["prod @ 0.0.8"]
+        HOT["hotfix/* merge"] -->|"bump + tag"| PROD2["prod @ 0.0.9"]
+    end
+
+    DEV -->|"promote when ready"| RELEASE
+    HOT -->|"back-merge sync"| DEV
+```
+
+### Example timeline
+
+| Action | `dev` VERSION | `prod` VERSION | Git tag |
+|--------|---------------|----------------|---------|
+| Start | 0.0.0 | 0.0.0 | — |
+| Merge `feature/auth` → dev | **0.0.1** | 0.0.0 | — |
+| Merge `fix/typo` → dev | **0.0.2** | 0.0.0 | — |
+| Release dev → prod | 0.0.2 | 0.0.2 | **v0.0.2** |
+| Merge `hotfix/payment` → prod | 0.0.2 | **0.0.3** | **v0.0.3** |
+| Back-merge hotfix → dev | **0.0.3** | 0.0.3 | — |
+
+### What gets updated automatically
+
+- [`VERSION`](../VERSION) — single source of truth
+- [`CHANGELOG.md`](../CHANGELOG.md) — entry added on each bump
+- **Git tags** — created on prod for releases and hotfixes (`v0.0.N`)
+- **GitHub Releases** — created from tags
+
+Bot commits use `[skip ci]` to avoid re-triggering workflows.
+
+### Manual versioning
+
+Do **not** edit `VERSION` in feature, fix, or hotfix branches. The automation handles it on merge. See [docs/versioning-test-plan.md](versioning-test-plan.md) for how to verify the workflow.

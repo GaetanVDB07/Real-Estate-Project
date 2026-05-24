@@ -15,5 +15,6 @@
 - [ ] Branch name follows convention (`feature/`, `fix/`, or `hotfix/`)
 - [ ] Tested locally
 - [ ] Hotfix: follow-up PR to `dev` planned or included
+- [ ] **Do not edit `VERSION` manually** — it is bumped automatically on merge
 
-See [docs/git-workflow.md](../docs/git-workflow.md) for the full branching model.
+See [docs/git-workflow.md](../docs/git-workflow.md) for the full branching model and versioning rules.

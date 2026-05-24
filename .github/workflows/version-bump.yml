@@ -1,0 +1,158 @@
+name: Version Bump
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - dev
+      - prod
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+
+      - name: Determine version action
+        id: plan
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+        run: |
+          ACTION="skip"
+          TAG="false"
+
+          case "$HEAD" in
+            feature/*|fix/*)
+              if [ "$BASE" = "dev" ]; then
+                ACTION="bump"
+              fi
+              ;;
+            hotfix/*)
+              if [ "$BASE" = "prod" ]; then
+                ACTION="bump"
+                TAG="true"
+              elif [ "$BASE" = "dev" ]; then
+                ACTION="sync_from_prod"
+              fi
+              ;;
+            dev)
+              if [ "$BASE" = "prod" ]; then
+                ACTION="tag_only"
+                TAG="true"
+              fi
+              ;;
+          esac
+
+          echo "action=$ACTION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          echo "Plan: action=$ACTION tag=$TAG (merge $HEAD -> $BASE)"
+
+      - name: Configure git
+        if: steps.plan.outputs.action != 'skip'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump patch version
+        if: steps.plan.outputs.action == 'bump'
+        id: bump
+        env:
+          HEAD: ${{ steps.plan.outputs.head }}
+          BASE: ${{ steps.plan.outputs.base }}
+        run: |
+          CURRENT=$(tr -d '[:space:]' < VERSION)
+          IFS='.' read -r major minor patch <<< "$CURRENT"
+          patch=$((patch + 1))
+          NEW_VERSION="${major}.${minor}.${patch}"
+          echo "$NEW_VERSION" > VERSION
+
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          BRANCH="$HEAD"
+
+          {
+            echo "## [$NEW_VERSION] - $(date -u +%Y-%m-%d)"
+            echo ""
+            echo "### Changed"
+            echo ""
+            echo "- $PR_TITLE (#$PR_NUMBER) from \`$BRANCH\` into \`$BASE\`"
+            echo ""
+          } > /tmp/changelog-entry.md
+
+          awk '
+            /^## \[Unreleased\]/ {
+              print
+              while ((getline line < "/tmp/changelog-entry.md") > 0) print line
+              next
+            }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+
+          git add VERSION CHANGELOG.md
+          git commit -m "chore(release): bump version to $NEW_VERSION [skip ci]"
+          git push origin HEAD
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version from prod
+        if: steps.plan.outputs.action == 'sync_from_prod'
+        run: |
+          git fetch origin prod
+          PROD_VERSION=$(git show origin/prod:VERSION | tr -d '[:space:]')
+          DEV_VERSION=$(tr -d '[:space:]' < VERSION)
+
+          if [ "$PROD_VERSION" = "$DEV_VERSION" ]; then
+            echo "dev already at prod version ($PROD_VERSION); nothing to sync"
+            exit 0
+          fi
+
+          echo "$PROD_VERSION" > VERSION
+          git add VERSION
+          git commit -m "chore(release): sync version to $PROD_VERSION from prod [skip ci]"
+          git push origin HEAD
+
+      - name: Create release tag
+        if: steps.plan.outputs.tag == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ steps.plan.outputs.head }}
+          BASE: ${{ steps.plan.outputs.base }}
+          ACTION: ${{ steps.plan.outputs.action }}
+        run: |
+          if [ "$ACTION" = "bump" ]; then
+            VERSION="${{ steps.bump.outputs.version }}"
+          else
+            git pull origin "$BASE"
+            VERSION=$(tr -d '[:space:]' < VERSION)
+          fi
+
+          TAG="v${VERSION}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; skipping tag creation"
+            exit 0
+          fi
+
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+          if [ "$HEAD" = "dev" ] && [ "$BASE" = "prod" ]; then
+            NOTES="Production release promoted from \`dev\` at version $VERSION."
+          else
+            NOTES="Hotfix release from \`$HEAD\` into \`prod\` at version $VERSION."
+          fi
+
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes "$NOTES"
