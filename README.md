@@ -36,3 +36,6 @@ create derivative works from this project without prior written permission
 from the copyright holder.
 
 See [LICENSE](LICENSE) for full terms.
+
+<!-- test: feature version bump -->
+<!-- test: fix version bump -->
