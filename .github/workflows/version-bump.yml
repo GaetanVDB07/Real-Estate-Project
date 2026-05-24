@@ -6,57 +6,72 @@ on:
     branches:
       - dev
       - prod
+  push:
+    branches:
+      - prod
 
 permissions:
   contents: write
 
 jobs:
   version:
-    if: github.event.pull_request.merged == true
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip ci]'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout base branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: ${{ github.event_name == 'push' && 'prod' || github.event.pull_request.base.ref }}
           fetch-depth: 0
 
       - name: Determine version action
         id: plan
         env:
-          BASE: ${{ github.event.pull_request.base.ref }}
-          HEAD: ${{ github.event.pull_request.head.ref }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'push' && 'prod' || github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref || '' }}
         run: |
           ACTION="skip"
           TAG="false"
 
-          case "$HEAD" in
-            feature/*|fix/*)
-              if [ "$BASE" = "dev" ]; then
-                ACTION="bump"
-              fi
-              ;;
-            hotfix/*)
-              if [ "$BASE" = "prod" ]; then
-                ACTION="bump"
-                TAG="true"
-              elif [ "$BASE" = "dev" ]; then
-                ACTION="sync_from_prod"
-              fi
-              ;;
-            dev)
-              if [ "$BASE" = "prod" ]; then
-                ACTION="tag_only"
-                TAG="true"
-              fi
-              ;;
-          esac
+          if [ "$EVENT" = "push" ] && [ "$BASE" = "prod" ]; then
+            COMMIT_MSG=$(git log -1 --format=%B)
+            if echo "$COMMIT_MSG" | grep -Eq 'Merge pull request #[0-9]+ from [^/]+/dev$'; then
+              ACTION="tag_only"
+              TAG="true"
+              HEAD="dev"
+            fi
+          elif [ "$EVENT" = "pull_request" ]; then
+            case "$HEAD" in
+              feature/*|fix/*)
+                if [ "$BASE" = "dev" ]; then
+                  ACTION="bump"
+                fi
+                ;;
+              hotfix/*)
+                if [ "$BASE" = "prod" ]; then
+                  ACTION="bump"
+                  TAG="true"
+                elif [ "$BASE" = "dev" ]; then
+                  ACTION="sync_from_prod"
+                fi
+                ;;
+              dev)
+                if [ "$BASE" = "prod" ]; then
+                  ACTION="tag_only"
+                  TAG="true"
+                fi
+                ;;
+            esac
+          fi
 
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
           echo "head=$HEAD" >> "$GITHUB_OUTPUT"
-          echo "Plan: action=$ACTION tag=$TAG (merge $HEAD -> $BASE)"
+          echo "Plan: action=$ACTION tag=$TAG (event=$EVENT merge $HEAD -> $BASE)"
 
       - name: Configure git
         if: steps.plan.outputs.action != 'skip'
@@ -77,8 +92,8 @@ jobs:
           NEW_VERSION="${major}.${minor}.${patch}"
           echo "$NEW_VERSION" > VERSION
 
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_TITLE="${{ github.event.pull_request.title || 'Production release' }}"
+          PR_NUMBER="${{ github.event.pull_request.number || 'push' }}"
           BRANCH="$HEAD"
 
           {
