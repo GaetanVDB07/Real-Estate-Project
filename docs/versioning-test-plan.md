@@ -49,6 +49,8 @@ Manual verification checklist for [`.github/workflows/version-bump.yml`](../.git
 - Git tag `v0.0.2` created
 - GitHub Release `v0.0.2` published
 
+**Note:** GitHub often does not fire `pull_request` closed for PRs whose head is the default branch (`dev`). The workflow uses a `push` trigger on `prod` to detect `Merge pull request … from …/dev` and create the tag.
+
 ### 4. Hotfix → prod (patch bump + tag)
 
 1. Branch `hotfix/test-version` from `prod`
