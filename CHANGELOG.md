@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.0.4] - 2026-05-25
+
+### Changed
+
+- Add Phase 1 agent portal and splat tour shell (#9) from `feature/phase1-agent-portal` into `dev`
+
 ## [0.0.3] - 2026-05-24
 
 ### Changed
