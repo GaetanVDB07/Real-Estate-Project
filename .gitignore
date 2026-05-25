@@ -1,0 +1,35 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env files
+.env
+.env*.local
+
+# data
+/data/
+/public/uploads/
+*.db
+
+# internal docs (local / AI agents only — not published)
+/docs/internal/
+
+# typescript
+next-env.d.ts

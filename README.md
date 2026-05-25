@@ -4,6 +4,10 @@ Upcoming real estate project.
 
 ## Development
 
+This project includes a **Next.js agent portal** for phone video capture, Gaussian splat processing, and embeddable 3D property tours.
+
+See **[docs/app-setup.md](docs/app-setup.md)** for local setup (`npm install`, `npm run db:push`, `npm run dev`).
+
 This project uses a **prod / dev** branching model:
 
 - **`dev`** — integration branch; feature and fix branches merge here
