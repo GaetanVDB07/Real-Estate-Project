@@ -1,0 +1,19 @@
+{
+  "name": "real-estate-project",
+  "version": "0.0.3",
+  "private": true,
+  "description": "Real estate 3D tour platform — phone capture to Gaussian splat embed",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "tsx src/lib/db/migrate.ts",
+    "worker": "tsx workers/process-jobs.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GaetanVDB07/Real-Estate-Project.git"
+  },
+  "license": "UNLICENSED"
+}
