@@ -1,23 +1,46 @@
 import { eq } from "drizzle-orm";
 import { db } from "../src/lib/db";
 import { processingJobs } from "../src/lib/db/schema";
+import { getWorkerMode, gpuToolsAvailable } from "../src/lib/jobs/splat-pipeline";
 import { processJob } from "../src/lib/jobs/processor";
 
+let isProcessing = false;
+
 async function pollQueuedJobs() {
+  if (isProcessing) {
+    return;
+  }
+
   const queued = await db
     .select()
     .from(processingJobs)
-    .where(eq(processingJobs.status, "queued"));
+    .where(eq(processingJobs.status, "queued"))
+    .limit(1);
 
-  for (const job of queued) {
-    console.log(`Processing job ${job.id}…`);
-    await processJob(job.id);
-    console.log(`Job ${job.id} finished.`);
+  if (queued.length === 0) {
+    return;
+  }
+
+  isProcessing = true;
+
+  try {
+    for (const job of queued) {
+      console.log(`Processing job ${job.id}…`);
+      await processJob(job.id);
+      console.log(`Job ${job.id} finished.`);
+    }
+  } finally {
+    isProcessing = false;
   }
 }
 
 async function main() {
-  console.log("Job worker started. Polling for queued jobs…");
+  const mode = getWorkerMode();
+  const gpuReady = mode === "gpu" || mode === "auto" ? await gpuToolsAvailable() : false;
+
+  console.log(`Job worker started (mode=${mode}${gpuReady ? ", gpu tools detected" : ""}).`);
+  console.log("Polling for queued jobs…");
+
   await pollQueuedJobs();
   setInterval(pollQueuedJobs, 5000);
 }
