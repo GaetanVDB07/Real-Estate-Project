@@ -6,7 +6,7 @@
 - **SQLite** (local dev) via Drizzle ORM
 - **NextAuth** credentials auth for agents
 - **SuperSplat Viewer** (`public/viewer/`) for orbit/fly/walk
-- **Worker** (`workers/`) for splat processing (simulated in dev)
+- **Worker** (`workers/`) for splat processing (`simulated` in dev, `gpu` with Nerfstudio)
 
 ## Quick start
 
@@ -44,9 +44,26 @@ npm run worker
 | `/tour/[id]` | Public tour page |
 | `/embed/[id]` | iframe-friendly embed |
 
-## Production splat pipeline
+## Splat pipeline modes
 
-See [workers/splat/README.md](../workers/splat/README.md) for Nerfstudio Splatfacto + SuperSplat steps.
+Set `SPLAT_WORKER_MODE` in `.env.local`:
+
+| Mode | Behavior |
+|------|----------|
+| `simulated` | Fast fake pipeline for local dev (default) |
+| `gpu` | Real ffmpeg + Nerfstudio Splatfacto pipeline |
+| `auto` | Uses GPU pipeline when tools are on PATH, otherwise simulated |
+
+GPU mode requires **ffmpeg** and either:
+
+- Nerfstudio CLI (`ns-process-data`, `ns-train`, `ns-export`) on PATH, or
+- Docker with `SPLAT_USE_DOCKER=true` and the image from `workers/splat/`
+
+Quality gate (before training): minimum 40 frames, brightness check, and rejection of low-quality captures with actionable retake messages in the dashboard.
+
+Optional tuning: `SPLAT_FRAME_FPS`, `SPLAT_MAX_ITERATIONS`, `SPLAT_DOCKER_IMAGE`.
+
+See [workers/splat/README.md](../workers/splat/README.md) for manual runs and SuperSplat cleanup.
 
 ## Branching
 

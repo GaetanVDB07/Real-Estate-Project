@@ -1,24 +1,22 @@
 import fs from "fs";
 import path from "path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { listings, processingJobs, rooms } from "@/lib/db/schema";
+import {
+  getWorkerMode,
+  gpuToolsAvailable,
+  resolvePublicAssetPath,
+  runGpuPipeline,
+  runSimulatedPipeline,
+  type JobContext,
+} from "@/lib/jobs/splat-pipeline";
 
 const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads");
 const PUBLISHED_DIR = path.join(process.cwd(), "public", "published");
+const JOBS_DIR = path.join(process.cwd(), "data", "jobs");
 
-const PIPELINE_STEPS: Array<{
-  status: (typeof processingJobs.$inferSelect)["status"];
-  progress: number;
-  delayMs: number;
-}> = [
-  { status: "extracting_frames", progress: 15, delayMs: 2000 },
-  { status: "running_colmap", progress: 35, delayMs: 3000 },
-  { status: "training_splat", progress: 70, delayMs: 5000 },
-  { status: "exporting", progress: 85, delayMs: 2000 },
-  { status: "post_processing", progress: 95, delayMs: 2000 },
-  { status: "ready", progress: 100, delayMs: 500 },
-];
+const activeJobs = new Set<string>();
 
 function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) {
@@ -26,31 +24,44 @@ function ensureDir(dir: string) {
   }
 }
 
-function writeDefaultSettings(settingsPath: string, roomName: string) {
-  const settings = {
-    version: 2,
-    title: roomName,
-    description: "Property tour generated from agent capture",
-    camera: {
-      initial: {
-        position: [0, 1.6, 3],
-        target: [0, 1.2, 0],
-      },
-    },
-    controls: {
-      orbit: true,
-      fly: true,
-      walk: false,
-    },
-  };
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+async function markListingStatus(listingId: string) {
+  const roomJobs = await db
+    .select()
+    .from(processingJobs)
+    .innerJoin(rooms, eq(processingJobs.roomId, rooms.id))
+    .where(eq(rooms.listingId, listingId));
+
+  const allReady = roomJobs.every(
+    (row) => row.processing_jobs.status === "ready"
+  );
+
+  await db
+    .update(listings)
+    .set({
+      status: allReady ? "ready" : "processing",
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(listings.id, listingId));
 }
 
-/**
- * In production, replace this simulated pipeline with the GPU worker
- * (Nerfstudio Splatfacto) described in workers/splat/README.md.
- */
+async function failJob(jobId: string, listingId: string, message: string) {
+  await db
+    .update(processingJobs)
+    .set({
+      status: "failed",
+      errorMessage: message,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(processingJobs.id, jobId));
+
+  await markListingStatus(listingId);
+}
+
 export async function processJob(jobId: string) {
+  if (activeJobs.has(jobId)) {
+    return;
+  }
+
   const [job] = await db
     .select()
     .from(processingJobs)
@@ -60,6 +71,31 @@ export async function processJob(jobId: string) {
   if (!job || job.status === "ready" || job.status === "failed") {
     return;
   }
+
+  if (job.status !== "queued") {
+    return;
+  }
+
+  const claimed = await db
+    .update(processingJobs)
+    .set({
+      status: "extracting_frames",
+      progress: 1,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(
+      and(
+        eq(processingJobs.id, jobId),
+        eq(processingJobs.status, "queued")
+      )
+    )
+    .returning();
+
+  if (claimed.length === 0) {
+    return;
+  }
+
+  activeJobs.add(jobId);
 
   const [room] = await db
     .select()
@@ -76,47 +112,65 @@ export async function processJob(jobId: string) {
         updatedAt: new Date().toISOString(),
       })
       .where(eq(processingJobs.id, jobId));
+    activeJobs.delete(jobId);
     return;
   }
 
   const publishDir = path.join(PUBLISHED_DIR, room.listingId, room.id);
+  const workDir = path.join(JOBS_DIR, jobId);
   ensureDir(publishDir);
+  ensureDir(workDir);
+
+  const videoDiskPath = job.videoPath
+    ? resolvePublicAssetPath(job.videoPath)
+    : "";
+
+  const updateStatus: JobContext["updateStatus"] = async (
+    status,
+    progress,
+    extra
+  ) => {
+    await db
+      .update(processingJobs)
+      .set({
+        status,
+        progress,
+        ...extra,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(processingJobs.id, jobId));
+  };
+
+  const ctx: JobContext = {
+    jobId,
+    job,
+    room,
+    publishDir,
+    videoDiskPath,
+    workDir,
+    updateStatus,
+  };
 
   try {
-    for (const step of PIPELINE_STEPS) {
-      await db
-        .update(processingJobs)
-        .set({
-          status: step.status,
-          progress: step.progress,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(processingJobs.id, jobId));
+    const mode = getWorkerMode();
+    let pipelineMode: "simulated" | "gpu" = "simulated";
 
-      await new Promise((resolve) => setTimeout(resolve, step.delayMs));
+    if (mode === "gpu") {
+      pipelineMode = "gpu";
+    } else if (mode === "auto" && (await gpuToolsAvailable())) {
+      pipelineMode = "gpu";
     }
 
-    const settingsPath = path.join(publishDir, "settings.json");
-    writeDefaultSettings(settingsPath, room.name);
-
-    const splatPath = path.join(publishDir, "scene.compressed.ply");
-    const posterPath = path.join(publishDir, "poster.svg");
-
-    if (!fs.existsSync(splatPath)) {
-      fs.writeFileSync(
-        splatPath,
-        "# Placeholder — replace with exported Gaussian splat .ply from Splatfacto\n"
-      );
-    }
-
-    if (!fs.existsSync(posterPath)) {
-      fs.writeFileSync(
-        posterPath,
-        `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450"><rect width="800" height="450" fill="#0f172a"/><text x="400" y="225" fill="#94a3b8" font-family="sans-serif" font-size="24" text-anchor="middle">${room.name} — 3D Tour</text></svg>`
-      );
+    if (pipelineMode === "gpu") {
+      await runGpuPipeline(ctx);
+    } else {
+      await runSimulatedPipeline(ctx);
     }
 
     const publicBase = `/published/${room.listingId}/${room.id}`;
+    const posterFilename = fs.existsSync(path.join(publishDir, "poster.jpg"))
+      ? "poster.jpg"
+      : "poster.svg";
 
     await db
       .update(processingJobs)
@@ -125,48 +179,19 @@ export async function processJob(jobId: string) {
         progress: 100,
         splatPath: `${publicBase}/scene.compressed.ply`,
         settingsPath: `${publicBase}/settings.json`,
-        posterPath: `${publicBase}/poster.svg`,
+        posterPath: `${publicBase}/${posterFilename}`,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(processingJobs.id, jobId));
 
-    const roomJobs = await db
-      .select()
-      .from(processingJobs)
-      .innerJoin(rooms, eq(processingJobs.roomId, rooms.id))
-      .where(eq(rooms.listingId, room.listingId));
-
-    const allReady = roomJobs.every(
-      (row) => row.processing_jobs.status === "ready"
-    );
-
-    if (allReady) {
-      await db
-        .update(listings)
-        .set({
-          status: "ready",
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(listings.id, room.listingId));
-    } else {
-      await db
-        .update(listings)
-        .set({
-          status: "processing",
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(listings.id, room.listingId));
-    }
+    await markListingStatus(room.listingId);
   } catch (error) {
-    await db
-      .update(processingJobs)
-      .set({
-        status: "failed",
-        errorMessage:
-          error instanceof Error ? error.message : "Processing failed",
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(processingJobs.id, jobId));
+    const message =
+      error instanceof Error ? error.message : "Processing failed";
+
+    await failJob(jobId, room.listingId, message);
+  } finally {
+    activeJobs.delete(jobId);
   }
 }
 
